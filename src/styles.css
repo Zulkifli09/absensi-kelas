@@ -88,6 +88,7 @@ select:focus {
 .workspace,
 .sidebar,
 .tool-panel,
+.cloud-panel,
 .note-row,
 .student-form,
 .blank-list {
@@ -330,6 +331,64 @@ h2 {
   margin-bottom: 12px;
 }
 
+.file-input {
+  display: none;
+}
+
+.cloud-panel {
+  box-shadow: none;
+  padding: 12px;
+  display: grid;
+  grid-template-columns: minmax(210px, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  background: #dfffd5;
+  margin-bottom: 12px;
+}
+
+.cloud-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.cloud-title div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.cloud-title span,
+.cloud-help,
+.cloud-actions span {
+  color: #4c4a52;
+  font-size: 13px;
+}
+
+.cloud-help {
+  margin: 0;
+}
+
+.cloud-login,
+.cloud-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cloud-login input {
+  width: min(280px, 100%);
+}
+
+.cloud-login button,
+.cloud-actions button {
+  padding: 0 12px;
+  font-weight: 800;
+}
+
 .note-row {
   grid-template-columns: auto 1fr;
   background: #e5f0ff;
@@ -455,6 +514,10 @@ tr:last-child td {
     grid-template-columns: 1fr;
   }
 
+  .cloud-panel {
+    grid-template-columns: 1fr;
+  }
+
   .action-row {
     justify-content: stretch;
   }
@@ -504,6 +567,18 @@ tr:last-child td {
 
   .note-row {
     grid-template-columns: 1fr;
+  }
+
+  .cloud-login,
+  .cloud-actions {
+    justify-content: stretch;
+  }
+
+  .cloud-login input,
+  .cloud-login button,
+  .cloud-actions button,
+  .cloud-actions span {
+    width: 100%;
   }
 
   .course-header {

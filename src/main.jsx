@@ -1,24 +1,29 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   BookOpen,
   CalendarCheck,
   Check,
-  ClipboardCheck,
+  Cloud,
+  CloudDownload,
+  CloudUpload,
   Copy,
   Download,
   FileDown,
-  GraduationCap,
+  HardDriveDownload,
   Plus,
   Save,
   Search,
   Trash2,
+  Upload,
   UserPlus,
   Users,
 } from 'lucide-react';
+import { isSupabaseConfigured, supabase } from './supabaseClient';
 import './styles.css';
 
 const STORAGE_KEY = 'absensi-kelas-pixel-v1';
+const CLOUD_ROW_ID = 'primary';
 const meetings = Array.from({ length: 16 }, (_, index) => index + 1);
 
 const statusMeta = {
@@ -71,6 +76,11 @@ function loadData() {
 
 function App() {
   const [data, setData] = useState(loadData);
+  const [session, setSession] = useState(null);
+  const [email, setEmail] = useState('');
+  const [cloudStatus, setCloudStatus] = useState(
+    isSupabaseConfigured ? 'Cloud siap dikonfigurasi' : 'Supabase belum dikonfigurasi',
+  );
   const [courseForm, setCourseForm] = useState({
     name: '',
     lecturer: '',
@@ -82,10 +92,29 @@ function App() {
   const [selectedMeeting, setSelectedMeeting] = useState(1);
   const [query, setQuery] = useState('');
   const [copied, setCopied] = useState(false);
+  const importInputRef = useRef(null);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
   }, [data]);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) return undefined;
+
+    supabase.auth.getSession().then(({ data: authData }) => {
+      setSession(authData.session);
+      if (authData.session) setCloudStatus('Login cloud aktif');
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+      setCloudStatus(nextSession ? 'Login cloud aktif' : 'Belum login cloud');
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
 
   const activeCourse = useMemo(
     () => data.courses.find((course) => course.id === data.activeCourseId) || data.courses[0],
@@ -254,6 +283,96 @@ function App() {
     downloadFile(csv, `${slugify(activeCourse.name)}-p${selectedMeeting}.csv`, 'text/csv;charset=utf-8;');
   }
 
+  function backupJson() {
+    const payload = {
+      app: 'absensi-kelas-pixel',
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      data,
+    };
+    downloadFile(
+      JSON.stringify(payload, null, 2),
+      `backup-absensi-${new Date().toISOString().slice(0, 10)}.json`,
+      'application/json;charset=utf-8;',
+    );
+  }
+
+  async function importJson(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      const importedData = parsed.data || parsed;
+      const cleanData = normalizeImportedData(importedData);
+      setData(cleanData);
+      setCloudStatus('Backup JSON berhasil diimpor');
+    } catch {
+      setCloudStatus('File backup tidak valid');
+    }
+  }
+
+  async function sendMagicLink(event) {
+    event.preventDefault();
+    if (!isSupabaseConfigured || !email.trim()) return;
+
+    setCloudStatus('Mengirim link login...');
+    const { error } = await supabase.auth.signInWithOtp({
+      email: email.trim(),
+      options: {
+        emailRedirectTo: window.location.origin,
+      },
+    });
+
+    setCloudStatus(error ? error.message : 'Cek email untuk link login');
+  }
+
+  async function saveToCloud() {
+    if (!session) return;
+
+    setCloudStatus('Menyimpan ke Supabase...');
+    const { error } = await supabase.from('attendance_profiles').upsert({
+      id: CLOUD_ROW_ID,
+      user_id: session.user.id,
+      data,
+      updated_at: new Date().toISOString(),
+    });
+
+    setCloudStatus(error ? error.message : 'Data tersimpan di Supabase');
+  }
+
+  async function loadFromCloud() {
+    if (!session) return;
+
+    setCloudStatus('Mengambil data dari Supabase...');
+    const { data: row, error } = await supabase
+      .from('attendance_profiles')
+      .select('data')
+      .eq('id', CLOUD_ROW_ID)
+      .eq('user_id', session.user.id)
+      .maybeSingle();
+
+    if (error) {
+      setCloudStatus(error.message);
+      return;
+    }
+
+    if (!row?.data) {
+      setCloudStatus('Belum ada data cloud');
+      return;
+    }
+
+    setData(normalizeImportedData(row.data));
+    setCloudStatus('Data cloud berhasil dimuat');
+  }
+
+  async function signOut() {
+    if (!isSupabaseConfigured) return;
+    await supabase.auth.signOut();
+  }
+
   async function copyRecap() {
     if (!activeCourse) return;
     const lines = [
@@ -363,9 +482,29 @@ function App() {
               <button onClick={() => markAll('H')}><Check size={16} /> Semua Hadir</button>
               <button onClick={exportMeetingCsv}><FileDown size={16} /> Export P{selectedMeeting}</button>
               <button onClick={exportCsv}><Download size={16} /> Export 16x</button>
+              <button onClick={backupJson}><HardDriveDownload size={16} /> Backup JSON</button>
+              <button onClick={() => importInputRef.current?.click()}><Upload size={16} /> Import JSON</button>
               <button onClick={copyRecap}><Copy size={16} /> {copied ? 'Tersalin' : 'Salin Rekap'}</button>
             </div>
+            <input
+              ref={importInputRef}
+              className="file-input"
+              type="file"
+              accept="application/json,.json"
+              onChange={importJson}
+            />
           </div>
+
+          <CloudPanel
+            email={email}
+            setEmail={setEmail}
+            session={session}
+            status={cloudStatus}
+            onLogin={sendMagicLink}
+            onSave={saveToCloud}
+            onLoad={loadFromCloud}
+            onLogout={signOut}
+          />
 
           <div className="note-row">
             <CalendarCheck size={18} />
@@ -401,6 +540,41 @@ function App() {
         </section>
       </section>
     </main>
+  );
+}
+
+function CloudPanel({ email, setEmail, session, status, onLogin, onSave, onLoad, onLogout }) {
+  return (
+    <section className="cloud-panel">
+      <div className="cloud-title">
+        <Cloud size={18} />
+        <div>
+          <strong>Backup Cloud Pribadi</strong>
+          <span>{status}</span>
+        </div>
+      </div>
+
+      {!isSupabaseConfigured ? (
+        <p className="cloud-help">Isi environment Supabase di Vercel untuk mengaktifkan login dan sinkronisasi.</p>
+      ) : session ? (
+        <div className="cloud-actions">
+          <span>{session.user.email}</span>
+          <button onClick={onSave}><CloudUpload size={16} /> Simpan Cloud</button>
+          <button onClick={onLoad}><CloudDownload size={16} /> Muat Cloud</button>
+          <button onClick={onLogout}>Logout</button>
+        </div>
+      ) : (
+        <form className="cloud-login" onSubmit={onLogin}>
+          <input
+            type="email"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            placeholder="Email pribadi"
+          />
+          <button type="submit"><Cloud size={16} /> Login</button>
+        </form>
+      )}
+    </section>
   );
 }
 
@@ -541,6 +715,36 @@ function slugify(text) {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'absensi';
 }
 
+function normalizeImportedData(importedData) {
+  if (!importedData || !Array.isArray(importedData.courses)) {
+    throw new Error('Invalid backup');
+  }
+
+  const courses = importedData.courses.map((course) => ({
+    id: course.id || crypto.randomUUID(),
+    name: course.name || 'Mata Kuliah',
+    lecturer: course.lecturer || 'Belum diisi',
+    room: course.room || 'Belum diisi',
+    day: course.day || 'Senin',
+    startTime: course.startTime || '08:00',
+    students: Array.isArray(course.students)
+      ? course.students.map((student) => ({
+          id: student.id || crypto.randomUUID(),
+          nim: student.nim || '-',
+          name: student.name || 'Mahasiswa',
+        }))
+      : [],
+    attendance: course.attendance || {},
+    notes: course.notes || {},
+  }));
+
+  return {
+    courses,
+    activeCourseId:
+      courses.find((course) => course.id === importedData.activeCourseId)?.id || courses[0]?.id || null,
+  };
+}
+
 function downloadFile(content, fileName, type) {
   const blob = new Blob([content], { type });
   const url = URL.createObjectURL(blob);
@@ -554,3 +758,9 @@ function downloadFile(content, fileName, type) {
 }
 
 createRoot(document.getElementById('root')).render(<App />);
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js');
+  });
+}
